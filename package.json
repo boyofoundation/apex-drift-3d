@@ -1,1 +1,11 @@
-{"name":"apex-drift-3d","private":true,"scripts":{"test:smoke":"node tests/smoke.mjs","test:e2e":"node tests/smoke.mjs"},"devDependencies":{"@playwright/test":"1.62.1"}}
+{
+  "name": "apex-drift-3d",
+  "private": true,
+  "scripts": {
+    "test:smoke": "node tests/smoke.mjs",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1"
+  }
+}
