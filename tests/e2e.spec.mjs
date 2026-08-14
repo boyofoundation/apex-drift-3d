@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 test('menu exposes Apex Drift 3D contract', async ({ page }) => {
-  await page.goto('/?e2e=1');
+  page.on('pageerror', e => console.log('PAGEERROR', e.message)); await page.goto('/?e2e=1');
   await expect(page.getByTestId('app-title')).toHaveText('APEX DRIFT');
   await expect(page.getByTestId('car-option')).toHaveCount(4);
   await expect(page.getByTestId('track-option')).toHaveCount(3);
