@@ -28,6 +28,18 @@ test('ordered production checkpoints reject early crossing and finish exactly th
   expect(errors).toEqual([]);
 });
 
+test('checkpoint shortcut advances 12 ordered checkpoints through one production lap transition', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await start(page);
+  const report = await page.evaluate(() => window.__APEX_DRIFT_3D_E2E__.advanceCheckpointShortcut({ count: 12 }));
+  expect(report.checkpointsAdvanced).toBe(12);
+  expect(report.lapChanged).toBe(true);
+  expect(report.after.lap).toBe(2);
+  expect(report.after.nextCheckpoint).toBe(0);
+  expect(errors).toEqual([]);
+});
+
 test('fixtures use production surface, recovery, telemetry, and deterministic AI transitions', async ({ page }) => {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
