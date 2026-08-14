@@ -1,2 +1,3 @@
 import { defineConfig, devices } from '@playwright/test';
-export default defineConfig({testDir:'./tests',timeout:15000,fullyParallel:false,use:{baseURL:'http://127.0.0.1:8080',trace:'retain-on-failure'},webServer:{command:'python3 -m http.server 8080',url:'http://127.0.0.1:8080',reuseExistingServer:true},projects:[{name:'chromium',use:{...devices['Desktop Chrome']}}]});
+const port=process.env.PLAYWRIGHT_PORT||'8080';
+export default defineConfig({testDir:'./tests',timeout:15000,fullyParallel:false,use:{baseURL:`http://127.0.0.1:${port}`,trace:'retain-on-failure'},webServer:{command:`python3 -m http.server ${port}`,url:`http://127.0.0.1:${port}`,reuseExistingServer:true},projects:[{name:'chromium',use:{...devices['Desktop Chrome']}}]});
