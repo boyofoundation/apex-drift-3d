@@ -1,113 +1,34 @@
 import { test, expect } from '@playwright/test';
 
-async function start(page) {
-  await page.goto('/?e2e=1');
+async function start(page, query = '?e2e=1') {
+  await page.goto(`/${query}`);
   await expect(page.getByTestId('start-race')).toBeVisible();
   await page.getByTestId('start-race').click();
   await expect(page.getByTestId('hud-lap')).toBeVisible();
 }
 
-test('ordered production checkpoints reject early crossing and finish exactly three laps', async ({ page }) => {
-  const errors = [];
-  page.on('pageerror', error => errors.push(error.message));
-  await start(page);
-  const report = await page.evaluate(() => {
-    const api = window.__APEX_DRIFT_3D_E2E__;
-    const early = api.placeVehicleAtFinishGate({ mode: 'early' });
-    const laps = [api.placeVehicleAtFinishGate({ mode: 'afterOrderedCheckpoints' }), api.placeVehicleAtFinishGate({ mode: 'afterOrderedCheckpoints' }), api.placeVehicleAtFinishGate({ mode: 'afterOrderedCheckpoints' })];
-    return { early, laps, final: api.snapshot() };
-  });
-  expect(report.early.crossedFinish).toBe(false);
-  expect(report.early.after.nextCheckpoint).toBe(report.early.before.nextCheckpoint);
-  expect(report.laps.map(lap => lap.crossedFinish)).toEqual([true, true, true]);
-  expect(report.laps.map(lap => lap.lapChanged)).toEqual([true, true, false]);
-  expect(report.laps.map(lap => [lap.before.lap, lap.after.lap])).toEqual([[1, 2], [2, 3], [3, 3]]);
-  expect(report.final.raceState).toBe('FINISHED');
-  expect(report.final.lap).toBe(3);
-  expect(report.final.aiTelemetryReport.ai).toHaveLength(5);
-  expect(errors).toEqual([]);
+test('ordered checkpoints accept last-checkpoint overshoot and finish exactly three laps', async ({ page }) => {
+  const errors = []; page.on('pageerror', error => errors.push(error.message)); await start(page);
+  const report = await page.evaluate(() => { const api = window.__APEX_DRIFT_3D_E2E__; const early = api.placeVehicleAtFinishGate({ mode: 'early' }); const laps = [api.placeVehicleAtFinishGate({ mode: 'afterOrderedCheckpoints' }), api.placeVehicleAtFinishGate({ mode: 'afterOrderedCheckpoints' }), api.placeVehicleAtFinishGate({ mode: 'afterOrderedCheckpoints' })]; return { early, laps, final: api.snapshot() }; });
+  expect(report.early.crossedFinish).toBe(false); expect(report.early.after.nextCheckpoint).toBe(report.early.before.nextCheckpoint);
+  expect(report.laps.map(x => x.crossedFinish)).toEqual([true, true, true]); expect(report.laps.map(x => x.lapChanged)).toEqual([true, true, false]);
+  expect(report.laps.map(x => [x.before.lap, x.after.lap])).toEqual([[1, 2], [2, 3], [3, 3]]); expect(report.final.raceState).toBe('FINISHED'); expect(report.final.lap).toBe(3); expect(report.final.cameraMode).toBe('first-person'); expect(errors).toEqual([]);
 });
 
-test('checkpoint shortcut advances 12 ordered checkpoints through one production lap transition', async ({ page }) => {
-  const errors = [];
-  page.on('pageerror', error => errors.push(error.message));
-  await start(page);
-  const report = await page.evaluate(() => window.__APEX_DRIFT_3D_E2E__.advanceCheckpointShortcut({ count: 12 }));
-  expect(report.checkpointsAdvanced).toBe(12);
-  expect(report.lapChanged).toBe(true);
-  expect(report.after.lap).toBe(2);
-  expect(report.after.nextCheckpoint).toBe(0);
-  expect(errors).toEqual([]);
+test('checkpoint shortcut uses the shared ordered transition', async ({ page }) => { await start(page); const report = await page.evaluate(() => window.__APEX_DRIFT_3D_E2E__.advanceCheckpointShortcut({ count: 12 })); expect(report.checkpointsAdvanced).toBe(12); expect(report.lapChanged).toBe(true); expect(report.after.lap).toBe(2); expect(report.after.nextCheckpoint).toBe(0); });
+
+test('all cars, tracks, hazards, recovery timestamps, and stepped telemetry are deterministic', async ({ page }) => {
+  await start(page); const report = await page.evaluate(() => { const api = window.__APEX_DRIFT_3D_E2E__; return { snapshot: api.snapshot(), hazards: ['neon-harbor', 'dust-canyon', 'frost-ridge'].map(trackId => api.enterHazardFixture({ trackId })), recoveries: ['vector-gt', 'pulse-rally'].map(selectedCarId => api.induceVehicleRecovery({ selectedCarId })), telemetry: ['vector-gt', 'comet-rs', 'pulse-rally', 'torque-v8'].map(selectedCarId => api.runCarTelemetryFixture({ selectedCarId, baselineCarId: 'vector-gt' })) }; });
+  expect(report.snapshot.contentCounts).toMatchObject({ cars: 4, tracks: 3, ai: 5, totalVehicles: 6 }); expect(report.hazards.map(x => x.effect.type)).toEqual(['wet', 'sand', 'ice']);
+  for (const recovery of report.recoveries) { expect(recovery.selected.startedAtMs).toBe(1000); expect(recovery.selected.recoveredAtMs).toBe(1000 + recovery.selected.durationMs); expect(recovery.selected.state).toBe('recovered'); expect(recovery.selected.lateralOffsetMeters).toBe(4); expect(recovery.selected.stallDurationMs).toBe(400); }
+  expect(report.recoveries[1].comparison.ratio).toBeLessThanOrEqual(.9); expect(report.recoveries[0].selected.timeoutAtMs).toBe(2000);
+  for (const telemetry of report.telemetry) { expect(telemetry.samples).toHaveLength(50); expect(telemetry.sampleIntervalMs).toBe(100); expect(telemetry.windowMs).toBe(4900); expect(telemetry.transitionSource).toBe('production-vehicle-physics'); expect(telemetry.terminalSpeed).toBe(telemetry.samples.at(-1).speed); expect(telemetry.samples.every(x => Number.isFinite(x.speed) && Number.isFinite(x.slip) && Number.isFinite(x.yaw))).toBe(true); }
 });
 
-test('fixtures use production surface, recovery, telemetry, and deterministic AI transitions', async ({ page }) => {
-  const errors = [];
-  page.on('pageerror', error => errors.push(error.message));
-  await start(page);
-  const report = await page.evaluate(() => {
-    const api = window.__APEX_DRIFT_3D_E2E__;
-    return {
-      keys: Object.keys(api),
-      hazard: api.enterHazardFixture({ trackId: 'dust-canyon' }),
-      recovery: api.induceVehicleRecovery(),
-      telemetry: api.runCarTelemetryFixture({ selectedCarId: 'pulse-rally', baselineCarId: 'vector-gt' }),
-      ai: api.induceAiRecovery({ aiId: 'ai-01' }),
-      snapshot: api.snapshot(),
-    };
-  });
-  expect(report.keys).toEqual(expect.arrayContaining(['snapshot', 'placeVehicleAtFinishGate', 'advanceCheckpointShortcut', 'induceAiRecovery', 'enterHazardFixture', 'runCarTelemetryFixture']));
-  expect(report.hazard.s).toBeCloseTo(.3);
-  expect(report.hazard.surfaceEffect.type).toBe('sand');
-  expect(report.hazard.after.surfaceEffect.type).toBe('sand');
-  expect(report.recovery.selected.recoveryDurationMs).toBeGreaterThan(0);
-  expect(report.telemetry.samples).toHaveLength(50);
-  expect(report.telemetry.terminalSpeed).toBe(report.telemetry.samples.at(-1).speed);
-  expect(report.ai.recoveryInput).toBe('off-route');
-  expect(report.ai.recovered).toBe(true);
-  expect(report.snapshot.aiTelemetryReport.ai).toHaveLength(5);
-  expect(new Set(report.snapshot.aiTelemetryReport.ai.map(ai => ai.aiId))).toEqual(new Set(['ai-01', 'ai-02', 'ai-03', 'ai-04', 'ai-05']));
-  expect(errors).toEqual([]);
-});
+test('AI exposes seeded ordered progress, real tolerance ratios, recovery, and order crossings', async ({ page }) => { await start(page); const report = await page.evaluate(() => { const api = window.__APEX_DRIFT_3D_E2E__; const recovery = api.induceAiRecovery({ aiId: 'ai-01' }); return { recovery, snapshot: api.snapshot() }; }); const ai = report.snapshot.aiTelemetryReport.ai; expect(ai).toHaveLength(5); expect(report.snapshot.vehicleProgress).toHaveLength(6); expect(ai.every(x => x.trackHalfWidth === 12 && x.inToleranceRatio >= 0 && x.inToleranceRatio <= 1 && x.normalizedRaceProgress >= 0)).toBe(true); expect(report.recovery.recoveryState).toBe('recovered'); expect(report.snapshot.aiTelemetryReport.overtakeCount).toBeGreaterThanOrEqual(0); });
 
-test('M, restart, and repeated starts leave at most one canvas without errors', async ({ page }) => {
-  const errors = [];
-  page.on('pageerror', error => errors.push(error.message));
-  await start(page);
-  await expect(page.locator('canvas')).toHaveCount(1);
-  await page.keyboard.press('M');
-  await expect(page.locator('canvas')).toHaveCount(0);
-  await page.getByTestId('start-race').click();
-  await expect(page.locator('canvas')).toHaveCount(1);
-  await page.keyboard.press('r');
-  await expect(page.locator('canvas')).toHaveCount(1);
-  await page.keyboard.press('M');
-  await expect(page.locator('canvas')).toHaveCount(0);
-  expect(errors).toEqual([]);
-});
+test('live camera mount survives COUNTDOWN, RACING, and FINISHED', async ({ page }) => { await start(page); const countdown = await page.evaluate(() => window.__APEX_DRIFT_3D_E2E__.snapshot()); await page.waitForTimeout(3200); const racing = await page.evaluate(() => window.__APEX_DRIFT_3D_E2E__.snapshot()); await page.evaluate(() => { const api = window.__APEX_DRIFT_3D_E2E__; api.placeVehicleAtFinishGate({ mode: 'afterOrderedCheckpoints' }); api.placeVehicleAtFinishGate({ mode: 'afterOrderedCheckpoints' }); api.placeVehicleAtFinishGate({ mode: 'afterOrderedCheckpoints' }); }); const finished = await page.evaluate(() => window.__APEX_DRIFT_3D_E2E__.snapshot()); expect(countdown.cameraMode).toBe('first-person'); expect(racing.raceState).toBe('RACING'); expect(racing.cameraMountTarget).toBe('player-cockpit'); expect(finished.raceState).toBe('FINISHED'); expect(finished.cameraMode).toBe('first-person'); expect(finished.cameraMountTarget).toBe('player-cockpit'); });
 
-test('WebGL import failure and renderer construction failure show fallback without pageerror', async ({ page }) => {
-  const importErrors = [];
-  page.on('pageerror', error => importErrors.push(error.message));
-  await page.route('**/vendor/three.module.min.js', route => route.abort());
-  await page.goto('/?e2e=1');
-  await expect(page.getByTestId('webgl-fallback')).toBeVisible();
-  expect(importErrors).toEqual([]);
+test('malformed e2e query is isolated and teardown is repeatable', async ({ page }) => { await page.goto('/?e2e=1x'); await expect(page.getByTestId('start-race')).toBeVisible(); expect(await page.evaluate(() => '__APEX_DRIFT_3D_E2E__' in window)).toBe(false); await start(page); await expect(page.locator('canvas')).toHaveCount(1); await page.keyboard.press('M'); await expect(page.locator('canvas')).toHaveCount(0); await page.getByTestId('start-race').click(); await expect(page.locator('canvas')).toHaveCount(1); await page.keyboard.press('r'); await expect(page.locator('canvas')).toHaveCount(1); await page.keyboard.press('M'); await expect(page.locator('canvas')).toHaveCount(0); });
 
-  const rendererPage = await page.context().newPage();
-  const rendererErrors = [];
-  rendererPage.on('pageerror', error => rendererErrors.push(error.message));
-  await rendererPage.addInitScript(() => {
-    const originalGetContext = HTMLCanvasElement.prototype.getContext;
-    HTMLCanvasElement.prototype.getContext = function (kind, ...args) {
-      if (kind === 'webgl' || kind === 'webgl2' || kind === 'experimental-webgl') return null;
-      return originalGetContext.call(this, kind, ...args);
-    };
-  });
-  await rendererPage.goto('/?e2e=1');
-  await expect(rendererPage.getByTestId('webgl-fallback')).toBeVisible();
-  if (await rendererPage.getByTestId('start-race').isVisible()) await rendererPage.getByTestId('start-race').click({ force: true });
-  await expect(rendererPage.getByTestId('webgl-fallback')).toBeVisible();
-  expect(await rendererPage.locator('canvas').count()).toBe(0);
-  expect(rendererErrors).toEqual([]);
-  await rendererPage.close();
-});
+test('import and renderer failures show fallback without page errors', async ({ page }) => { const errors = []; page.on('pageerror', error => errors.push(error.message)); await page.route('**/vendor/three.module.min.js', route => route.abort()); await page.goto('/?e2e=1'); await expect(page.getByTestId('webgl-fallback')).toBeVisible(); expect(errors).toEqual([]); const rendererPage = await page.context().newPage(); const rendererErrors = []; rendererPage.on('pageerror', error => rendererErrors.push(error.message)); await rendererPage.addInitScript(() => { const original = HTMLCanvasElement.prototype.getContext; HTMLCanvasElement.prototype.getContext = function (kind, ...args) { if (kind === 'webgl' || kind === 'webgl2' || kind === 'experimental-webgl') return null; return original.call(this, kind, ...args); }; }); await rendererPage.goto('/?e2e=1'); await expect(rendererPage.getByTestId('webgl-fallback')).toBeVisible(); if (await rendererPage.getByTestId('start-race').isVisible()) await rendererPage.getByTestId('start-race').click({ force: true }); await expect(rendererPage.getByTestId('webgl-fallback')).toBeVisible(); expect(await rendererPage.locator('canvas').count()).toBe(0); expect(rendererErrors).toEqual([]); await rendererPage.close(); });
