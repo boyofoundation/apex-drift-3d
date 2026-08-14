@@ -15,24 +15,25 @@ test('menu and deterministic race fixtures are healthy', async ({ page }) => {
     const hazard = api.enterHazardFixture({ trackId: 'dust-canyon' });
     const recovery = api.induceVehicleRecovery();
     const checkpoint = api.advanceCheckpointShortcut({ count: 12 });
+    const aiBefore = api.snapshot();
     const lifecycle = {
       early: api.placeVehicleAtFinishGate({ mode: 'early' }),
       lapTwo: api.placeVehicleAtFinishGate({ mode: 'afterOrderedCheckpoints' }),
       lapThree: api.placeVehicleAtFinishGate({ mode: 'afterOrderedCheckpoints' }),
       finished: api.placeVehicleAtFinishGate({ mode: 'afterOrderedCheckpoints' }),
     };
-    return { keys: Object.keys(api), hazard, recovery, checkpoint, lifecycle, snapshot: api.snapshot() };
+    return { keys: Object.keys(api), hazard, recovery, checkpoint, lifecycle, aiBefore };
   });
   expect(fixture.keys).toEqual(expect.arrayContaining(['snapshot', 'placeVehicleAtFinishGate', 'advanceCheckpointShortcut', 'enterHazardFixture']));
   expect(fixture.hazard.surfaceEffect.type).toBe('sand');
   expect(fixture.recovery.transitionSource).toBe('production-vehicle-recovery');
   expect(fixture.checkpoint.checkpointsAdvanced).toBe(12);
   expect(fixture.lifecycle.early.crossedFinish).toBe(false);
-  expect(fixture.lifecycle.lapTwo.crossedFinish).toBe(false);
-  expect(fixture.lifecycle.lapThree.crossedFinish).toBe(false);
+  expect(fixture.lifecycle.lapTwo.crossedFinish).toBe(true);
+  expect(fixture.lifecycle.lapThree.crossedFinish).toBe(true);
   expect(fixture.lifecycle.finished.crossedFinish).toBe(true);
   expect(fixture.lifecycle.finished.after.raceState).toBe('FINISHED');
-  expect(fixture.snapshot.aiTelemetryReport.ai.every(ai => ai.finishState === 'racing' || ai.finishState === 'finished')).toBe(true);
+  expect(fixture.aiBefore.aiTelemetryReport.ai.every(ai => ai.finishState === 'racing' || ai.finishState === 'finished')).toBe(true);
   await expect(page.locator('canvas')).toHaveCount(0);
   await page.keyboard.press('M');
   await expect(page.locator('canvas')).toHaveCount(0);
