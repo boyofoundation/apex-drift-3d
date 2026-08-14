@@ -18,7 +18,10 @@ test('ordered production checkpoints reject early crossing and finish exactly th
     return { early, laps, final: api.snapshot() };
   });
   expect(report.early.crossedFinish).toBe(false);
+  expect(report.early.after.nextCheckpoint).toBe(report.early.before.nextCheckpoint);
   expect(report.laps.map(lap => lap.crossedFinish)).toEqual([true, true, true]);
+  expect(report.laps.map(lap => lap.lapChanged)).toEqual([true, true, false]);
+  expect(report.laps.map(lap => [lap.before.lap, lap.after.lap])).toEqual([[1, 2], [2, 3], [3, 3]]);
   expect(report.final.raceState).toBe('FINISHED');
   expect(report.final.lap).toBe(3);
   expect(report.final.aiTelemetryReport.ai).toHaveLength(5);
