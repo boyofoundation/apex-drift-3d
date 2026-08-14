@@ -12,24 +12,33 @@
 # Error details
 
 ```
-Error: expect(locator).toHaveText(expected) failed
+Error: expect(locator).toHaveCount(expected) failed
 
-Locator: getByTestId('app-title')
-Expected: "APEX DRIFT"
-Timeout: 5000ms
-Error: element(s) not found
+Locator:  getByTestId('car-option')
+Expected: 4
+Received: 0
+Timeout:  5000ms
 
 Call log:
-  - Expect "toHaveText" with timeout 5000ms
-  - waiting for getByTestId('app-title')
+  - Expect "toHaveCount" with timeout 5000ms
+  - waiting for getByTestId('car-option')
+    14 × locator resolved to 0 elements
+       - unexpected value "0"
 
 ```
 
+# Page snapshot
+
 ```yaml
-- heading "Forbidden" [level=1]
-- paragraph: You don't have permission to access this resource.
-- separator
-- text: Apache/2.4.65 (Debian) Server at 127.0.0.1 Port 8080
+- main [ref=e2]:
+  - generic [ref=e4]:
+    - text: STATIC WEBGL RACER · THREE.JS 0.165.0
+    - heading "APEX DRIFT" [level=1] [ref=e5]
+    - paragraph [ref=e6]: Find the line. Hold the apex. Own the weather.
+    - heading "Choose car" [level=3] [ref=e7]
+    - heading "Choose environment" [level=3] [ref=e8]
+    - button "START RACE" [ref=e9] [cursor=pointer]
+    - paragraph [ref=e10]: WASD / arrows drive · Space drift · R restart · M menu
 ```
 
 # Test source
@@ -38,9 +47,9 @@ Call log:
   1  | import { test, expect } from '@playwright/test';
   2  | test('menu exposes Apex Drift 3D contract', async ({ page }) => {
   3  |   await page.goto('/?e2e=1');
-> 4  |   await expect(page.getByTestId('app-title')).toHaveText('APEX DRIFT');
-     |                                               ^ Error: expect(locator).toHaveText(expected) failed
-  5  |   await expect(page.getByTestId('car-option')).toHaveCount(4);
+  4  |   await expect(page.getByTestId('app-title')).toHaveText('APEX DRIFT');
+> 5  |   await expect(page.getByTestId('car-option')).toHaveCount(4);
+     |                                                ^ Error: expect(locator).toHaveCount(expected) failed
   6  |   await expect(page.getByTestId('track-option')).toHaveCount(3);
   7  |   await expect(page.getByTestId('webgl-fallback')).toBeHidden();
   8  |   const api = await page.evaluate(() => Object.keys(window.__APEX_DRIFT_3D_E2E__));
