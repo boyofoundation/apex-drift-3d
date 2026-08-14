@@ -9,11 +9,22 @@ async function start(page, query = '?e2e=1') {
 
 test('ordered checkpoints accept last-checkpoint overshoot and finish exactly three laps', async ({ page }) => {
   const errors = []; page.on('pageerror', error => errors.push(error.message)); await start(page);
-  const report = await page.evaluate(() => { const api = window.__APEX_DRIFT_3D_E2E__; const early = api.placeVehicleAtFinishGate({ mode: 'early' }); const partial = api.advanceCheckpointShortcut({ count: 3 }); const earlyAfterPartial = api.placeVehicleAtFinishGate({ mode: 'early' }); const laps = [api.placeVehicleAtFinishGate({ mode: 'afterOrderedCheckpoints' }), api.placeVehicleAtFinishGate({ mode: 'afterOrderedCheckpoints' }), api.placeVehicleAtFinishGate({ mode: 'afterOrderedCheckpoints' })]; return { early, partial, earlyAfterPartial, laps, final: api.snapshot() }; });
+  const report = await page.evaluate(() => {
+    const api = window.__APEX_DRIFT_3D_E2E__;
+    const early = api.placeVehicleAtFinishGate({ mode: 'early' });
+    const partial = api.advanceCheckpointShortcut({ count: 3 });
+    const earlyAfterPartial = api.placeVehicleAtFinishGate({ mode: 'early' });
+    const laps = [1, 2, 3].map(() => { const result = api.placeVehicleAtFinishGate({ mode: 'afterOrderedCheckpoints' }); return { ...result, checkpointText: document.querySelector('#checkpoint').textContent }; });
+    const repeated = api.placeVehicleAtFinishGate({ mode: 'afterOrderedCheckpoints' });
+    return { early, partial, earlyAfterPartial, laps, repeated, final: api.snapshot() };
+  });
   expect(report.early.crossedFinish).toBe(false); expect(report.early.after.nextCheckpoint).toBe(report.early.before.nextCheckpoint);
   expect(report.earlyAfterPartial.crossedFinish).toBe(false); expect(report.earlyAfterPartial.after.nextCheckpoint).toBe(report.earlyAfterPartial.before.nextCheckpoint);
   expect(report.laps.map(x => x.crossedFinish)).toEqual([true, true, true]); expect(report.laps.map(x => x.lapChanged)).toEqual([true, true, false]);
-  expect(report.laps.map(x => [x.before.lap, x.after.lap])).toEqual([[1, 2], [2, 3], [3, 3]]); expect(report.final.raceState).toBe('FINISHED'); expect(report.final.lap).toBe(3); expect(report.final.cameraMode).toBe('first-person'); expect(errors).toEqual([]);
+  expect(report.laps.map(x => [x.before.lap, x.after.lap])).toEqual([[1, 2], [2, 3], [3, 3]]);
+  expect(report.laps.map(x => x.checkpointText)).toEqual(['CHECKPOINT 1/12', 'CHECKPOINT 1/12', 'CHECKPOINT 12/12']);
+  expect(report.repeated.crossedFinish).toBe(false); expect(report.repeated.before).toEqual(report.repeated.after);
+  expect(report.final.raceState).toBe('FINISHED'); expect(report.final.lap).toBe(3); expect(report.final.cameraMode).toBe('first-person'); expect(errors).toEqual([]);
 });
 
 test('checkpoint shortcut uses the shared ordered transition', async ({ page }) => { await start(page); const report = await page.evaluate(() => window.__APEX_DRIFT_3D_E2E__.advanceCheckpointShortcut({ count: 12 })); expect(report.checkpointsAdvanced).toBe(12); expect(report.lapChanged).toBe(true); expect(report.after.lap).toBe(2); expect(report.after.nextCheckpoint).toBe(0); });
@@ -23,18 +34,95 @@ test('runtime driving and deterministic physics share the live camera/physics tr
 test('live recovery consumes player placement input, advances its clock, and restores the route', async ({ page }) => { await start(page); await page.waitForFunction(() => window.__APEX_DRIFT_3D_E2E__.snapshot().raceState === 'RACING'); const inducedTimeout = await page.evaluate(() => window.__APEX_DRIFT_3D_E2E__.inducePlayerOffRoute({ lateralOffsetMeters: 24, timeoutMs: 1 })); expect(inducedTimeout.lateralOffsetMeters).toBeCloseTo(24, 8); await page.waitForFunction(() => window.__APEX_DRIFT_3D_E2E__.snapshot().vehicleRecovery?.state === 'timeout'); const timedOut = await page.evaluate(() => window.__APEX_DRIFT_3D_E2E__.snapshot()); const induced = await page.evaluate(() => window.__APEX_DRIFT_3D_E2E__.inducePlayerOffRoute({ lateralOffsetMeters: 24, timeoutMs: 8000 })); expect(induced.lateralOffsetMeters).toBeCloseTo(24, 8); await page.waitForFunction(() => window.__APEX_DRIFT_3D_E2E__.snapshot().vehicleRecovery?.state === 'recovering'); const recovering = await page.evaluate(() => window.__APEX_DRIFT_3D_E2E__.snapshot()); await page.waitForFunction(() => window.__APEX_DRIFT_3D_E2E__.snapshot().vehicleRecovery?.state === 'recovered'); const recovered = await page.evaluate(() => window.__APEX_DRIFT_3D_E2E__.snapshot()); expect(timedOut.runtimeClockMs).toBeGreaterThan(inducedTimeout.after.runtimeClockMs); expect(recovering.runtimeClockMs).toBeGreaterThan(induced.after.runtimeClockMs); expect(recovered.runtimeClockMs).toBeGreaterThan(recovering.runtimeClockMs); expect(timedOut.vehicleRecovery.transitionSource).toBe('production-player-lateral-offset'); expect(recovered.vehicleRecovery.transitionSource).toBe('production-player-lateral-offset'); expect(recovered.playerRecoverySource).toBe('production-player-lateral-offset'); expect(Math.abs(recovered.playerLateralOffsetMeters)).toBeLessThanOrEqual(recovered.vehicleProgress[0].trackHalfWidth); expect(recovered.cameraMountTarget).toBe('player-cockpit'); });
 
 test('all cars, tracks, hazards, recovery timestamps, and stepped telemetry are deterministic', async ({ page }) => {
-  await start(page); const report = await page.evaluate(() => { const api = window.__APEX_DRIFT_3D_E2E__; const hazards = ['neon-harbor', 'dust-canyon', 'frost-ridge'].map(trackId => ({ inside: api.enterHazardFixture({ trackId, s: .3 }), outside: api.enterHazardFixture({ trackId, s: .2 }) })); const recoveries = ['vector-gt', 'pulse-rally'].map(selectedCarId => api.induceVehicleRecovery({ selectedCarId })); return { snapshot: api.snapshot(), hazards, recoveries, runtimeRecovery: api.snapshot().vehicleRecovery, telemetry: ['vector-gt', 'comet-rs', 'pulse-rally', 'torque-v8'].map(selectedCarId => api.runCarTelemetryFixture({ selectedCarId, baselineCarId: 'vector-gt' })) }; });
-  expect(report.snapshot.contentCounts).toMatchObject({ cars: 4, tracks: 3, ai: 5, totalVehicles: 6 }); expect(report.hazards.map(x => x.inside.effect.type)).toEqual(['wet', 'sand', 'ice']); expect(report.hazards.every(x => x.outside.effect.type === 'normal')).toBe(true);
-  for (const recovery of report.recoveries) { expect(recovery.fixtureId).toBe('recovery-v1'); expect(recovery.seed).toBe('car-threshold-v1'); expect(recovery.trackId).toBe('neon-harbor'); expect(recovery.selected.startedAtMs).toBe(1000); expect(recovery.selected.recoveredAtMs).toBe(1000 + recovery.selected.durationMs); expect(recovery.selected.timeoutAtMs).toBe(9000); expect(recovery.selected.state).toBe('recovered'); expect(recovery.selected.lateralOffsetMeters).toBe(24); expect(recovery.selected.stallDurationMs).toBe(1000); expect(recovery.selected.timeout.timeoutAtMs).toBe(9000); expect(recovery.selected.timeout.state).toBe('timeout'); }
-  expect(report.recoveries[1].comparison.ratio).toBeLessThanOrEqual(.9); expect(report.runtimeRecovery.state).toBe('timeout'); expect(report.runtimeRecovery.lateralOffsetMeters).toBe(24);
-  for (const telemetry of report.telemetry) { expect(telemetry.samples).toHaveLength(50); expect(telemetry.sampleIntervalMs).toBe(100); expect(telemetry.windowMs).toBe(5000); expect(telemetry.transitionSource).toBe('production-vehicle-physics'); expect(telemetry.terminalSpeed).toBe(telemetry.samples.at(-1).speed); expect(telemetry.samples.every(x => Number.isFinite(x.speed) && Number.isFinite(x.slip) && Number.isFinite(x.yaw))).toBe(true); }
+  await start(page);
+  const report = await page.evaluate(() => {
+    const api = window.__APEX_DRIFT_3D_E2E__;
+    const before = api.snapshot();
+    const hazards = ['neon-harbor', 'dust-canyon', 'frost-ridge'].map(trackId => ({ inside: api.enterHazardFixture({ trackId, s: .3 }), outside: api.enterHazardFixture({ trackId, s: .2 }) }));
+    const recoveries = ['vector-gt', 'pulse-rally'].map(selectedCarId => api.induceVehicleRecovery({ selectedCarId }));
+    const telemetry = ['vector-gt', 'comet-rs', 'pulse-rally', 'torque-v8'].map(selectedCarId => api.runCarTelemetryFixture({ selectedCarId, baselineCarId: 'vector-gt' }));
+    const frostPhysics = api.runCarTelemetryFixture({ trackId: 'frost-ridge', script: 'fixed-slalom-v1', steerMagnitude: 1, hazard: true });
+    const after = api.snapshot();
+    return { before, after, hazards, recoveries, telemetry, frostPhysics };
+  });
+  expect(report.before.contentCounts).toMatchObject({ cars: 4, tracks: 3, ai: 5, totalVehicles: 6 });
+  expect(report.hazards.map(x => x.inside.effect.type)).toEqual(['wet', 'sand', 'ice']);
+  expect(report.hazards.every(x => x.outside.effect.type === 'normal')).toBe(true);
+  expect(report.hazards.every(x => Number.isFinite(x.inside.ai.speedMultiplier) && Number.isFinite(x.inside.ai.steeringMultiplier))).toBe(true);
+  expect(new Set(report.hazards.map(x => x.inside.ai.speedMultiplier)).size).toBe(3);
+  for (const recovery of report.recoveries) {
+    expect(recovery.fixtureId).toBe('recovery-v1'); expect(recovery.seed).toBe('car-threshold-v1'); expect(recovery.trackId).toBe('neon-harbor');
+    expect(recovery.selected.startedAtMs).toBe(1000); expect(recovery.selected.recoveredAtMs).toBe(1000 + recovery.selected.durationMs); expect(recovery.selected.timeoutAtMs).toBe(9000);
+    expect(recovery.selected.state).toBe('recovered'); expect(recovery.selected.lateralOffsetMeters).toBe(24); expect(recovery.selected.stallDurationMs).toBe(1000);
+    expect(recovery.selected.timeout.timeoutAtMs).toBe(9000); expect(recovery.selected.timeout.state).toBe('timeout');
+  }
+  expect(report.recoveries[1].comparison.ratio).toBeLessThanOrEqual(.9);
+  expect(report.after.runtimeClockMs).toBe(report.before.runtimeClockMs);
+  expect(report.after.vehicleRecovery).toEqual(report.before.vehicleRecovery);
+  expect(report.after.surfaceEffect).toEqual(report.before.surfaceEffect);
+  expect(report.after.aiTelemetryReport).toEqual(report.before.aiTelemetryReport);
+  for (const telemetry of report.telemetry) {
+    expect(telemetry.samples).toHaveLength(50); expect(telemetry.sampleIntervalMs).toBe(100); expect(telemetry.windowMs).toBe(5000);
+    expect(telemetry.transitionSource).toBe('production-vehicle-physics'); expect(telemetry.terminalSpeed).toBe(telemetry.samples.at(-1).speed);
+    expect(telemetry.samples.every(x => Number.isFinite(x.speed) && Number.isFinite(x.slip) && Number.isFinite(x.yaw))).toBe(true);
+  }
+  expect(report.frostPhysics.surfaceEffect.type).toBe('ice');
+  expect(report.frostPhysics.physics.steering).toBeCloseTo(.65, 8);
+  expect(report.frostPhysics.samples[0].yaw).toBeCloseTo(.065, 8);
 });
 
-test('fixed slalom telemetry uses the accepted throttle and alternating steer script', async ({ page }) => { await start(page); const report = await page.evaluate(() => window.__APEX_DRIFT_3D_E2E__.runCarTelemetryFixture({ fixtureId: 'fixed-slalom-v1' })); expect(report.windowMs).toBe(5000); expect(report.comparison.throttle).toBe(.75); expect(report.comparison.steerScript).toBe('alternating'); expect(report.comparison.steerMagnitude).toBe(.65); expect(report.comparison.steerSegmentMs).toBe(500); expect(report.comparison.handbrake).toBe(false); expect(report.comparison.drift).toBe(false); expect(report.samples.slice(0, 5).every(x => x.throttle === .75 && x.steer === .65 && x.handbrake === false && x.drift === false)).toBe(true); expect(report.samples.slice(5, 10).every(x => x.steer === -.65)).toBe(true); expect(report.samples.slice(10, 15).every(x => x.steer === .65)).toBe(true); });
+test('fixed slalom telemetry uses the accepted throttle and alternating steer script', async ({ page }) => {
+  await start(page);
+  const report = await page.evaluate(() => window.__APEX_DRIFT_3D_E2E__.runCarTelemetryFixture({ fixtureId: 'fixed-slalom-v1' }));
+  expect(report.windowMs).toBe(5000); expect(report.comparison.throttle).toBe(.75); expect(report.comparison.steerScript).toBe('alternating');
+  expect(report.comparison.steerMagnitude).toBe(.65); expect(report.comparison.steerSegmentMs).toBe(500); expect(report.comparison.handbrake).toBe(false); expect(report.comparison.drift).toBe(false);
+  expect(report.samples.slice(0, 5).every(x => x.throttle === .75 && x.steer === .65 && x.handbrake === false && x.drift === false)).toBe(true);
+  expect(report.samples.slice(5, 10).every(x => x.steer === -.65)).toBe(true); expect(report.samples.slice(10, 15).every(x => x.steer === .65)).toBe(true);
+});
 
-test('AI exposes seeded ordered progress, real tolerance ratios, recovery, and order crossings', async ({ page }) => { await start(page); const report = await page.evaluate(() => { const api = window.__APEX_DRIFT_3D_E2E__; const recovery = api.induceAiRecovery({ aiId: 'ai-01' }); const capturedRecoverySamples = recovery.after.aiTelemetryReport.ai[0].lateralOffsetMetersSamples.slice(); const fixture = api.runAiRaceFixture(); return { recovery, capturedRecoverySamples, fixture, snapshot: api.snapshot() }; }); const ai = report.snapshot.aiTelemetryReport.ai; expect(ai).toHaveLength(5); expect(report.snapshot.vehicleProgress).toHaveLength(6); expect(report.snapshot.vehicleProgress.slice(1).every(x => x.kind === 'ai' && Array.isArray(x.checkpointIds) && x.trackHalfWidth === 12 && typeof x.lapIndex === 'number' && typeof x.finished === 'boolean')).toBe(true); expect(ai.every(x => x.trackHalfWidth === 12 && x.inToleranceCount <= x.lateralOffsetMetersSamples.length && x.inToleranceRatio >= 0 && x.inToleranceRatio <= 1 && x.normalizedRaceProgress >= 0)).toBe(true); expect(report.recovery.recoveryState).toBe('recovered'); expect(report.recovery.after.aiTelemetryReport.ai[0].lateralOffsetMetersSamples).toEqual(report.capturedRecoverySamples); expect(report.recovery.after.aiTelemetryReport.ai[0].lateralOffsetMetersSamples.some(x => Math.abs(x) > 12)).toBe(true); expect(report.fixture.dtSeconds).toBe(.01); expect(report.fixture.sampleIntervalMs).toBe(100); expect(report.fixture.allFinished).toBe(true); expect(report.fixture.ai).toHaveLength(5); expect(report.fixture.ai.every(x => x.lap === 3 && x.checkpointIds.length === 12 && x.finished)).toBe(true); expect(report.fixture.ai.every(x => x.sampleTimestampsMs.length > 0 && x.sampleTimestampsMs.every((t, i, values) => i === 0 || t - values[i - 1] === 100))).toBe(true); expect(report.fixture.orderCrossings.length).toBeGreaterThan(0); expect(report.fixture.orderCrossings.every(x => x.vehicleIds.length === 2 && typeof x.simulatedTimestampMs === 'number' && Number.isInteger(x.simulatedTimestampMs / 10))).toBe(true); expect(typeof report.snapshot.aiTelemetryReport.overtakeCount).toBe('number'); });
+test('AI exposes seeded ordered progress, real tolerance ratios, recovery, and order crossings', async ({ page }) => {
+  await start(page);
+  const report = await page.evaluate(() => {
+    const api = window.__APEX_DRIFT_3D_E2E__;
+    const recovery = api.induceAiRecovery({ aiId: 'ai-01' });
+    const capturedRecoverySamples = recovery.after.aiTelemetryReport.ai[0].lateralOffsetMetersSamples.slice();
+    const fixture = api.runAiRaceFixture();
+    return { recovery, capturedRecoverySamples, fixture, snapshot: api.snapshot() };
+  });
+  const ai = report.snapshot.aiTelemetryReport.ai;
+  expect(ai).toHaveLength(5); expect(report.snapshot.vehicleProgress).toHaveLength(6);
+  expect(report.snapshot.vehicleProgress.slice(1).every(x => x.kind === 'ai' && Array.isArray(x.checkpointIds) && x.trackHalfWidth === 12 && typeof x.lapIndex === 'number' && typeof x.finished === 'boolean')).toBe(true);
+  expect(ai.every(x => x.trackHalfWidth === 12 && x.inToleranceCount <= x.lateralOffsetMetersSamples.length && x.inToleranceRatio >= 0 && x.inToleranceRatio <= 1 && x.normalizedRaceProgress >= 0)).toBe(true);
+  expect(report.recovery.recoveryState).toBe('recovered'); expect(report.recovery.after.aiTelemetryReport.ai[0].lateralOffsetMetersSamples).toEqual(report.capturedRecoverySamples);
+  expect(report.recovery.after.aiTelemetryReport.ai[0].lateralOffsetMetersSamples.some(x => Math.abs(x) > 12)).toBe(true);
+  expect(report.fixture.dtSeconds).toBe(.01); expect(report.fixture.sampleIntervalMs).toBe(100); expect(report.fixture.allFinished).toBe(true); expect(report.fixture.ai).toHaveLength(5);
+  expect(report.fixture.ai.every(x => x.lap === 3 && x.checkpointIds.length === 12 && x.finished)).toBe(true);
+  expect(report.fixture.ai.every(x => x.sampleTimestampsMs.length > 0 && x.sampleTimestampsMs.every((t, i, values) => t % 100 === 0 && (i === 0 || t - values[i - 1] === 100)))).toBe(true);
+  expect(report.fixture.orderCrossings.length).toBeGreaterThan(0); expect(report.fixture.orderCrossings.every(x => x.vehicleIds.length === 2 && typeof x.simulatedTimestampMs === 'number' && x.simulatedTimestampMs % 100 === 0)).toBe(true);
+  expect(typeof report.snapshot.aiTelemetryReport.overtakeCount).toBe('number');
+});
 
-test('AI fixture output is isolated from runtime checkpoint and crossing state', async ({ page }) => { await start(page); const report = await page.evaluate(() => { const api = window.__APEX_DRIFT_3D_E2E__; const fixture = api.runAiRaceFixture(); fixture.ai[0].checkpointIds.pop(); fixture.ai[0].sampleTimestampsMs.pop(); fixture.orderCrossings[0].vehicleIds.reverse(); const followUp = api.runAiRaceFixture({ maxFrames: 1, dt: .01 }); return { fixture, followUp, snapshot: api.snapshot() }; }); expect(report.fixture.ai[0].checkpointIds.length).toBe(11); expect(report.followUp.allFinished).toBe(true); expect(report.followUp.ai[0].checkpointIds).toHaveLength(12); expect(report.followUp.ai[0].sampleTimestampsMs.length).toBeGreaterThan(0); expect(report.snapshot.vehicleProgress.slice(1).every(x => x.checkpointIds.length === 12 && x.finished)).toBe(true); expect(report.followUp.orderCrossings.length).toBeGreaterThan(0); expect(report.followUp.orderCrossings[0].vehicleIds).toHaveLength(2); });
+test('AI fixture output is isolated from runtime checkpoint, crossing, and clock state', async ({ page }) => {
+  await start(page);
+  const report = await page.evaluate(() => {
+    const api = window.__APEX_DRIFT_3D_E2E__;
+    const before = api.snapshot();
+    const first = api.runAiRaceFixture();
+    const firstCopy = structuredClone(first);
+    first.ai[0].checkpointIds.pop(); first.ai[0].sampleTimestampsMs.pop(); first.orderCrossings[0].vehicleIds.reverse();
+    const second = api.runAiRaceFixture({ maxFrames: 1, dt: .01 });
+    const third = api.runAiRaceFixture({ maxFrames: 1, dt: .01 });
+    const after = api.snapshot();
+    return { before, first, firstCopy, second, third, after };
+  });
+  expect(report.first.ai[0].checkpointIds).toHaveLength(report.firstCopy.ai[0].checkpointIds.length - 1);
+  expect(report.firstCopy.ai[0].checkpointIds).toHaveLength(12); expect(report.second).toEqual(report.third);
+  expect(report.second.allFinished).toBe(false); expect(report.second.ai).toHaveLength(5);
+  expect(report.second.frames).toBe(1); expect(report.second.simulatedTimeMs).toBe(10);
+  expect(report.after.runtimeClockMs).toBe(report.before.runtimeClockMs); expect(report.after.vehicleProgress).toEqual(report.before.vehicleProgress);
+  expect(report.after.aiTelemetryReport).toEqual(report.before.aiTelemetryReport); expect(report.after.vehicleRecovery).toEqual(report.before.vehicleRecovery);
+  expect(report.after.surfaceEffect).toEqual(report.before.surfaceEffect);
+});
 
 test('live camera mount and measured frames survive COUNTDOWN, RACING, and FINISHED', async ({ page }) => { await start(page); const countdown = await page.evaluate(() => window.__APEX_DRIFT_3D_E2E__.snapshot()); await page.waitForTimeout(3200); const racing = await page.evaluate(() => window.__APEX_DRIFT_3D_E2E__.snapshot()); await page.evaluate(() => { const api = window.__APEX_DRIFT_3D_E2E__; api.placeVehicleAtFinishGate({ mode: 'afterOrderedCheckpoints' }); api.placeVehicleAtFinishGate({ mode: 'afterOrderedCheckpoints' }); api.placeVehicleAtFinishGate({ mode: 'afterOrderedCheckpoints' }); }); const finished = await page.evaluate(() => window.__APEX_DRIFT_3D_E2E__.snapshot()); await page.waitForTimeout(100); const afterFinished = await page.evaluate(() => window.__APEX_DRIFT_3D_E2E__.snapshot()); expect(countdown.cameraMode).toBe('first-person'); expect(racing.raceState).toBe('RACING'); expect(racing.cameraMountTarget).toBe('player-cockpit'); expect(finished.raceState).toBe('FINISHED'); expect(finished.cameraMode).toBe('first-person'); expect(finished.cameraMountTarget).toBe('player-cockpit'); expect(afterFinished.performanceStats.frameCount).toBeGreaterThan(finished.performanceStats.frameCount); expect(afterFinished.performanceStats.fpsAverage).toBeGreaterThan(0); expect(afterFinished.performanceStats.maxFrameTimeMs).toBeGreaterThanOrEqual(afterFinished.performanceStats.frameTimeP95Ms); });
 
